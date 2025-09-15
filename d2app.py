@@ -16,22 +16,15 @@ class Account(User):
 
     @classmethod
     def signup(cls, username, password):
-        """
-        Creates a new user account if the username doesn't exist.
-        Returns True for a successful signup, False otherwise.
-        """
+        
         if username in cls.users:
-            return False  # Username already exists
-        # Add the new user to the dictionary
+            return False  
         cls.users[username] = password
-        return True  # Signup was successful
+        return True 
 
     @classmethod
     def login(cls, username, password):
-        """
-        Checks if the provided username and password are valid.
-        Returns True for a successful login, False otherwise.
-        """
+       
         return username in cls.users and cls.users[username] == password
 
 
@@ -39,7 +32,6 @@ class Account(User):
 app = Flask(__name__)
 
 # --- HTML Templates ---
-# The HTML and CSS code for the pages remain the same.
 signup_page = """
 <!doctype html>
 <html>
@@ -259,12 +251,10 @@ login_page = """
 # --- Routes ---
 @app.route("/")
 def home():
-    """Redirects the user to the signup page."""
     return redirect(url_for("signup"))
 
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
-    """Handles the signup page logic."""
     message = ""
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -273,12 +263,10 @@ def signup():
         if not username or not password:
             message = "Please fill both fields."
         elif Account.signup(username, password):
-            # Signup successful, redirect to the login page
             print(f"New user created: {username}")
             print(f"Current users dictionary: {Account.users}")
             return redirect(url_for("login"))
         else:
-            # Signup failed, username already exists
             print(f"Attempted to create existing user: {username}")
             print(f"Current users dictionary: {Account.users}")
             message = "Username already exists!"
@@ -287,17 +275,14 @@ def signup():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    """Handles the login page logic."""
     message = ""
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
         if Account.login(username, password):
-            # Login successful, display a welcome message
             message = f"Login successful! Welcome, {username}"
         else:
-            # Login failed
             message = "Invalid username or password!"
 
     return render_template_string(login_page, message=message)
@@ -305,4 +290,3 @@ def login():
 if __name__ == "__main__":
     app.run(debug=True)
 
-    
