@@ -26,7 +26,7 @@ shakti=goa()
 khalith=goa()
 vishnu=goa()
 
-shakti.drink="old monk"
+shakti.drink="milk"
 shakti.beach="sand beach"
 shakti.vehicle="bike"
 shakti.price=10000
