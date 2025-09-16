@@ -1,42 +1,25 @@
 from flask import Flask, request, redirect, url_for, session, render_template
 from pymongo import MongoClient
 
-
-class User:
-    def __init__(self, username, password):
-        self.username = username
-        self.password = password
-
-class Account(User):
-    users = {}
-
-    def __init__(self, username, password):
-        super().__init__(username, password)
-
-    @classmethod
-    def signup(cls, username, password):
-        if username in cls.users:
-            return False
-        cls.users[username] = password
-        return True
-
-    @classmethod
-    def login(cls, username, password):
-        return username in cls.users and cls.users[username] == password
-
-
 app = Flask(__name__)
 app.secret_key = "your_secret_key"
 
-
-client = MongoClient("mongodb+srv://shakti4052_db_user:shakti1707@cluster0.dmyk79s.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+# MongoDB connection
+client = MongoClient(
+    "mongodb+srv://shakti4052_db_user:shakti1707@cluster0.dmyk79s.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+)
 db = client["flaskdb"]
 users_collection = db["users"]
 
+# -------------------------
+# Routes
+# -------------------------
 
 @app.route("/")
 def home():
-    return redirect(url_for("signup"))
+    if "username" in session:  # already logged in
+        return redirect(url_for("chat"))
+    return redirect(url_for("login"))
 
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
@@ -77,9 +60,17 @@ def login():
 
 @app.route("/chat")
 def chat():
-    if "username" not in session:
+    if "username" not in session:  
         return redirect(url_for("login"))
     return render_template("chat.html", username=session["username"])
 
+@app.route("/logout")
+def logout():
+    session.pop("username", None)
+    return redirect(url_for("login"))
+
+# -------------------------
+# Run Flask
+# -------------------------
 if __name__ == "__main__":
     app.run(debug=True)

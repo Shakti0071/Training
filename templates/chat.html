@@ -8,14 +8,16 @@
             padding: 0;
             box-sizing: border-box;
         }
+
         body {
             height: 100vh;
             display: flex;
             font-family: "Segoe UI", Tahoma, sans-serif;
-            background-image: linear-gradient(135deg, #74ebd5 0%, #9face6 100%);
+            background-image: linear-gradient(135deg, #74ebd5 0%, #9face6 100%); /* ✅ same as login theme */
             color: #333;
         }
-    
+
+        /* Sidebar */
         .sidebar {
             width: 260px;
             background: rgba(255, 255, 255, 0.85);
@@ -52,19 +54,55 @@
             font-size: 13px;
             color: #555;
         }
-      
+
+        /* Chat container */
         .chat-container {
             flex-grow: 1;
             display: flex;
             flex-direction: column;
             background: transparent;
         }
+
+        /* Header with profile + logout */
         .chat-header {
-            padding: 15px;
+            padding: 15px 20px;
             border-bottom: 1px solid rgba(0, 0, 0, 0.1);
             background: rgba(255, 255, 255, 0.85);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-header h3 {
             font-weight: bold;
         }
+        .profile {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .profile img {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+        }
+        .username {
+            font-weight: bold;
+            color: #333;
+        }
+        .logout-btn {
+            text-decoration: none;
+            background: #ff4d4d;
+            color: white;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: 0.3s;
+        }
+        .logout-btn:hover {
+            background: #e60000;
+        }
+
+        /* Chat messages */
         .chat-messages {
             flex-grow: 1;
             padding: 20px;
@@ -92,7 +130,8 @@
             border-bottom-left-radius: 0;
             box-shadow: 0 3px 8px rgba(0, 0, 0, 0.1);
         }
-       
+
+        /* Input box */
         .chat-input {
             display: flex;
             padding: 15px;
@@ -131,7 +170,7 @@
     </style>
 </head>
 <body>
-   
+    <!-- Sidebar -->
     <div class="sidebar">
         <div class="sidebar-header">New Chat</div>
         <div class="chat-list">
@@ -142,9 +181,16 @@
         <div class="sidebar-footer">⚙️ Settings</div>
     </div>
 
-  
+    <!-- Chat Container -->
     <div class="chat-container">
-        <div class="chat-header">ChatGPT</div>
+        <div class="chat-header">
+            <h3>ChatGPT</h3>
+            <div class="profile">
+                <img src="https://www.svgrepo.com/show/384674/account-avatar-profile-user-11.svg" alt="Profile">
+                <span class="username">{{ username }}</span>
+                <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
+            </div>
+        </div>
         <div class="chat-messages" id="messages">
             <div class="message bot"> Hello! How can I help you today?</div>
         </div>
@@ -162,13 +208,13 @@
 
             let chatBox = document.getElementById("messages");
 
-        
+            // User message
             let userMsg = document.createElement("div");
             userMsg.className = "message user";
             userMsg.innerText = msg;
             chatBox.appendChild(userMsg);
 
-         
+            // Bot reply
             let botMsg = document.createElement("div");
             botMsg.className = "message bot";
             botMsg.innerText = " You said: " + msg;
