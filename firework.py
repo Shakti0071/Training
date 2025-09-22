@@ -1,0 +1,26 @@
+import requests
+import json
+
+url = "https://api.fireworks.ai/inference/v1/chat/completions"
+payload = {
+  "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+  "max_tokens": 4096,
+  "top_p": 1,
+  "top_k": 40,
+  "presence_penalty": 0,
+  "frequency_penalty": 0,
+  "temperature": 0.6,
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi"
+    }
+  ]
+}
+headers = {
+  "Accept": "application/json",
+  "Content-Type": "application/json",
+  "Authorization": "Bearer fw_3ZjYrkod6BN4JPDLM7BLLh5b"
+}
+response = requests.request("POST", url, headers=headers, data=json.dumps(payload))
+print(response.text)
