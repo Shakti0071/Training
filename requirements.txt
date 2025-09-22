@@ -13,4 +13,5 @@ google-auth-httplib2
 google-auth-oauthlib
 python-dateutil
 requests
+python-dotenv
 dateparser
