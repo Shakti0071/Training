@@ -10,11 +10,39 @@ from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
 import requests
+from send_meeting import create_google_meeting
+from google.auth.transport.requests import Request as GoogleRequest
+from dotenv import load_dotenv
+load_dotenv()
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
+GOOGLE_AUTH_URI = os.getenv("GOOGLE_AUTH_URI")
+GOOGLE_TOKEN_URI = os.getenv("GOOGLE_TOKEN_URI")
+GOOGLE_CERT_URL = os.getenv("GOOGLE_CERT_URL")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
+
+GOOGLE_CLIENT_CONFIG = {
+    "web": {
+        "client_id": GOOGLE_CLIENT_ID,
+        "project_id": GOOGLE_PROJECT_ID,
+        "auth_uri": GOOGLE_AUTH_URI,
+        "token_uri": GOOGLE_TOKEN_URI,
+        "auth_provider_x509_cert_url": GOOGLE_CERT_URL,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uris": [GOOGLE_REDIRECT_URI]
+    }
+}
+
 
 # --- Flask App ---
 app = Flask(__name__)
 app.secret_key = "4f3a6f9c9e4e2f3e9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3"
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/calendar.events'
+]
 
 # --- MongoDB Connection ---
 client = MongoClient(
@@ -84,11 +112,39 @@ def normalize_time(time_str):
 
 
 # --- Helper: Convert to RFC3339 for Google Calendar ---
-def to_rfc3339(dt_str):
-    parsed = dateparser.parse(dt_str, settings={'TIMEZONE': 'Asia/Kolkata', 'RETURN_AS_TIMEZONE_AWARE': True})
-    if not parsed:
-        raise ValueError(f"Could not parse datetime: {dt_str}")
-    return parsed.isoformat()
+# --- Helper: Convert datetime object to RFC3339 for Google Calendar ---
+def to_rfc3339(dt_object):
+    """
+    Converts a timezone-aware datetime object to an RFC3339 string
+    that the Google Calendar API accepts.
+    """
+    if not dt_object:
+        raise ValueError("Cannot convert a null datetime object.")
+    
+    # The .isoformat() method on a timezone-aware object already
+    # produces the correct RFC3339 format (e.g., '2025-09-19T16:00:00+05:30').
+    # We DO NOT need to add 'Z'.
+    return dt_object.isoformat()
+
+def parse_meeting_time(time_str, relative_base=None):
+    """
+    Parses a time string using dateparser with robust settings.
+    Returns a timezone-aware datetime object.
+    """
+    if not time_str:
+        return None
+    
+    base = relative_base or datetime.now()
+
+    # Settings to handle ambiguity and prefer future dates
+    settings = {
+        'TIMEZONE': 'Asia/Kolkata',
+        'RETURN_AS_TIMEZONE_AWARE': True,  # Important for Google API
+        'PREFER_DATES_FROM': 'future',
+        'RELATIVE_BASE': base,
+    }
+    
+    return dateparser.parse(time_str, settings=settings)
 
 # --- Standard Routes ---
 @app.route("/")
@@ -148,20 +204,26 @@ def logout():
 # --- Google OAuth Routes ---
 @app.route('/authorize')
 def authorize():
-    flow = Flow.from_client_secrets_file(
-        CLIENT_SECRETS_FILE,
+    flow = Flow.from_client_config(
+        GOOGLE_CLIENT_CONFIG,
         scopes=SCOPES,
         redirect_uri=url_for('oauth2callback', _external=True)
     )
-    authorization_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true')
+    
+    # This part is critical
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        prompt='consent' 
+    )
+    
     session['state'] = state
     return redirect(authorization_url)
 
 @app.route('/oauth2callback')
 def oauth2callback():
     state = session['state']
-    flow = Flow.from_client_secrets_file(
-        CLIENT_SECRETS_FILE, scopes=SCOPES, state=state,
+    flow = Flow.from_client_config(
+        GOOGLE_CLIENT_CONFIG, scopes=SCOPES, state=state,
         redirect_uri=url_for('oauth2callback', _external=True)
     )
     flow.fetch_token(authorization_response=request.url)
@@ -182,150 +244,81 @@ def process_chat_message():
     user_message = request.json.get('message')
 
     prompt = f"""
-    User message: "{user_message}"
+        Analyze the user's request: "{user_message}"
 
-    You are a chatbot that schedules meetings.
-    - Extract meeting details if scheduling is requested.
-    - Support relative dates like "today", "tonight", "tomorrow", "next Monday".
-    - Always return absolute dates in "YYYY-MM-DD HH:MM" format.
-    - Do NOT hardcode past years; dates should be relative to today.
+        Your task is to act as a meeting scheduling assistant. You must extract the meeting title, start time, end time, and a list of attendee emails.
+        - The current date is {datetime.now().strftime('%Y-%m-%d %H:%M')}. Use this for relative dates like "today" or "tomorrow".
+        - Convert all times to an absolute format that dateparser can understand (e.g., "today 4pm", "tomorrow 10:30am").
+        - If no end time is specified, calculate it as 1 hour after the start time.
 
-    Return JSON in this format:
-    {{
-        "message": "string (chatbot reply in natural language)",
-        "meeting_proposal": {{
-            "title": "string",
-            "start_time": "YYYY-MM-DD HH:MM",
-            "end_time": "YYYY-MM-DD HH:MM",
-            "attendees": ["email1", "email2"]
-        }} OR null
-    }}
-    """
+        IMPORTANT: Your entire response MUST be a single, valid JSON object and nothing else. Do not add explanations or markdown formatting like ```json.
+
+        The JSON format MUST be:
+        {{
+            "message": "A brief, friendly confirmation message for the user.",
+            "meeting_proposal": {{
+                "title": "string",
+                "start_time": "string (e.g., 'today 4:00 PM')",
+                "end_time": "string (e.g., 'today 5:00 PM')",
+                "attendees": ["email1@example.com"]
+            }}
+        }}
+
+        If you cannot extract enough details, return a JSON object where "meeting_proposal" is null.
+        """
 
     bot_reply = call_fireworks_api(prompt)
 
     try:
-        data = json.loads(bot_reply)
+        # Clean up potential markdown formatting from the AI response
+        json_str = bot_reply[bot_reply.find("{"): bot_reply.rfind("}")+1]
+        data = json.loads(json_str)
     except Exception:
-        try:
-            json_str = bot_reply[bot_reply.find("{"): bot_reply.rfind("}")+1]
-            data = json.loads(json_str)
-        except Exception:
-            return jsonify({"type": "chat", "reply": bot_reply})
+        return jsonify({"type": "chat", "reply": bot_reply})
 
     meeting_proposal = data.get("meeting_proposal")
-    if not meeting_proposal:
+    if not meeting_proposal or not meeting_proposal.get("start_time"):
         return jsonify({"type": "chat", "reply": data.get("message", bot_reply)})
+
+    # --- Parse times using the new reliable function ---
+    start_dt = parse_meeting_time(meeting_proposal.get("start_time"))
+    end_dt = parse_meeting_time(meeting_proposal.get("end_time"))
+
+    # If parsing fails for the start time, we can't proceed
+    if not start_dt:
+        return jsonify({"type": "chat", "reply": "I'm sorry, I couldn't understand the meeting time. Could you please be more specific?"})
+
+    # If end time is missing or invalid, default it to 1 hour after start
+    if not end_dt or end_dt <= start_dt:
+        from datetime import timedelta
+        end_dt = start_dt + timedelta(hours=1)
 
     # --- Normalize attendees ---
     attendees = meeting_proposal.get("attendees") or []
     if isinstance(attendees, str):
-        attendees = [a.strip() for a in attendees.split(",")]
-    meeting_proposal["attendees"] = attendees
-
-    # --- Normalize times ---
-    now = datetime.now()
-
-    def smart_normalize(time_str, user_message=None, default_duration_hours=1):
-        """
-        Parse Fireworks date robustly. Use relative phrases from user message if parsed date is in the past.
-        Also, ensure end_time is after start_time by adding default_duration_hours if needed.
-        """
-        if not time_str:
-            return None
-
-        import re
-        now = datetime.now()
-
-        # Try parsing the Fireworks time
-        parsed = dateparser.parse(
-            time_str,
-            settings={
-                'TIMEZONE': 'Asia/Kolkata',
-                'RETURN_AS_TIMEZONE_AWARE': False,
-                'PREFER_DATES_FROM': 'future',
-                'RELATIVE_BASE': now
-            }
-        )
-
-        # If parsing failed or date is in past, fallback to relative phrases from user message
-        if not parsed or parsed < now:
-            text_to_parse = user_message if user_message else time_str
-            phrases = ["today", "tomorrow", "tonight", "next monday", "next tuesday",
-                    "next wednesday", "next thursday", "next friday", "next saturday", "next sunday"]
-            for phrase in phrases:
-                if phrase in text_to_parse.lower():
-                    parsed = dateparser.parse(
-                        phrase,
-                        settings={
-                            'TIMEZONE': 'Asia/Kolkata',
-                            'RETURN_AS_TIMEZONE_AWARE': False,
-                            'PREFER_DATES_FROM': 'future',
-                            'RELATIVE_BASE': now
-                        }
-                    )
-                    break
-
-        # Extract hour and minute from Fireworks string if present
-        hour_match = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(AM|PM|am|pm)?', time_str)
-        if hour_match and parsed:
-            hour = int(hour_match.group(1))
-            minute = int(hour_match.group(2) or 0)
-            ampm = hour_match.group(3)
-            if ampm and ampm.lower() == "pm" and hour < 12:
-                hour += 12
-            if ampm and ampm.lower() == "am" and hour == 12:
-                hour = 0
-            parsed = parsed.replace(hour=hour, minute=minute)
-        else:
-            # Default times
-            if parsed and 'tonight' in (user_message or '').lower():
-                parsed = parsed.replace(hour=20, minute=0)
-            elif parsed:
-                parsed = parsed.replace(hour=16, minute=0)  # default 4 PM if nothing specified
-
-        return parsed.strftime("%Y-%m-%d %H:%M") if parsed else None
-
-
-    # --- Adjust end time if same as start ---
-    def ensure_end_time(start_str, end_str, default_duration_minutes=60):
-        from datetime import datetime, timedelta
-        start_dt = datetime.strptime(start_str, "%Y-%m-%d %H:%M")
-        if not end_str:
-            end_dt = start_dt + timedelta(minutes=default_duration_minutes)
-        else:
-            end_dt = datetime.strptime(end_str, "%Y-%m-%d %H:%M")
-            if end_dt <= start_dt:
-                end_dt = start_dt + timedelta(minutes=default_duration_minutes)
-        return end_dt.strftime("%Y-%m-%d %H:%M")
-
-
-
-    start_time = smart_normalize(meeting_proposal.get("start_time"), user_message)
-    end_time = smart_normalize(meeting_proposal.get("end_time"), user_message)
-    end_time = ensure_end_time(start_time, end_time, default_duration_minutes=60)
-
-
-    meeting_proposal["start_time"] = start_time
-    meeting_proposal["end_time"] = end_time
+        attendees = [a.strip() for a in attendees.split(",") if a.strip()]
+    
+    # Format for display on the frontend
+    display_format = "%Y-%m-%d %H:%M"
 
     return jsonify({
         "type": "meeting_proposal",
-        "message": data.get("message", "I found a meeting slot."),
+        "message": data.get("message", "I can schedule this for you. Does this look right?"),
         "details": {
             "title": meeting_proposal.get("title", "Scheduled Meeting"),
-            "start_time_display": start_time,
-            "end_time_display": end_time,
+            "start_time_display": start_dt.strftime(display_format),
+            "end_time_display": end_dt.strftime(display_format),
             "attendees": attendees
         }
     })
 
 
 # --- Schedule Meeting Route ---
+# --- Schedule Meeting Route ---
 @app.route('/schedule_meeting', methods=['POST'])
 def schedule_meeting():
     if 'google_credentials' not in session:
-        return jsonify({'error': 'Authentication required.'}), 401
+        return jsonify({'success': False, 'message': 'Authentication required.'}), 401
 
     creds = Credentials.from_authorized_user_info(session['google_credentials'], SCOPES)
     if creds.expired and creds.refresh_token:
@@ -338,19 +331,27 @@ def schedule_meeting():
             return jsonify({"success": False, "message": "❌ No meeting details received."})
 
         title = meeting_details.get('title', 'Scheduled Meeting')
-        start_time = normalize_time(meeting_details.get("start_time"))
-        end_time = normalize_time(meeting_details.get("end_time"))
+        start_time_str = meeting_details.get("start_time")
+        end_time_str = meeting_details.get("end_time")
         attendees = meeting_details.get('attendees', [])
 
-        if not start_time or not end_time:
-            return jsonify({"success": False, "message": "❌ Missing start or end time."})
+        # Parse the string times from the request into datetime objects
+        start_dt = parse_meeting_time(start_time_str)
+        end_dt = parse_meeting_time(end_time_str)
+
+        if not start_dt or not end_dt:
+            return jsonify({"success": False, "message": "❌ Invalid start or end time format."})
+        
+        # Convert datetime objects to the RFC3339 string format required by Google API
+        start_rfc = to_rfc3339(start_dt)
+        end_rfc = to_rfc3339(end_dt)
 
         service = build("calendar", "v3", credentials=creds)
 
         event_body = {
             'summary': title,
-            'start': {'dateTime': to_rfc3339(start_time), 'timeZone': 'Asia/Kolkata'},
-            'end': {'dateTime': to_rfc3339(end_time), 'timeZone': 'Asia/Kolkata'},
+            'start': {'dateTime': start_rfc, 'timeZone': 'Asia/Kolkata'},
+            'end': {'dateTime': end_rfc, 'timeZone': 'Asia/Kolkata'},
             'attendees': [{'email': email} for email in attendees if email],
             'conferenceData': {
                 'createRequest': {
@@ -359,37 +360,28 @@ def schedule_meeting():
                 }
             }
         }
-
-        # --- Send invitations immediately ---
+        
         created_event = service.events().insert(
             calendarId='primary',
             body=event_body,
             conferenceDataVersion=1,
-            sendUpdates='all'  # Sends invitations to all attendees
+            sendUpdates='all'
         ).execute()
-
-        # --- Fetch attendee response statuses ---
-        attendee_statuses = {}
-        for attendee in created_event.get('attendees', []):
-            email = attendee.get('email')
-            status = attendee.get('responseStatus', 'needsAction')  # 'accepted', 'declined', 'needsAction'
-            attendee_statuses[email] = status
 
         return jsonify({
             "success": True,
+            "message": "✅ Meeting scheduled!",
             "meet_link": created_event.get('hangoutLink'),
             "event_link": created_event.get('htmlLink'),
-            "start_time": start_time,
-            "end_time": end_time,
-            "attendee_statuses": attendee_statuses
         })
 
     except Exception as e:
         import traceback
         print("🔥 ERROR TRACEBACK:", traceback.format_exc())
         return jsonify({"success": False, "message": str(e)})
-
+    
 # --- Run Flask App ---
 if __name__ == "__main__":
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
     app.run(debug=True, port=5000)
