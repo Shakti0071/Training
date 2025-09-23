@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import dateparser
 
 from flask import Flask, request, redirect, url_for, session, render_template, jsonify
@@ -11,10 +11,12 @@ from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
 import requests
 from send_meeting import create_google_meeting
-from google.auth.transport.requests import Request as GoogleRequest
 from dotenv import load_dotenv
+
+# Load environment variables
 load_dotenv()
 
+# --- Google OAuth Config ---
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
@@ -35,25 +37,23 @@ GOOGLE_CLIENT_CONFIG = {
     }
 }
 
-
 # --- Flask App ---
 app = Flask(__name__)
-app.secret_key = "4f3a6f9c9e4e2f3e9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3"
+app.secret_key = os.getenv("FLASK_SECRET_KEY")
+
 SCOPES = [
-    'https://www.googleapis.com/auth/calendar',
-    'https://www.googleapis.com/auth/calendar.events'
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/calendar.events"
 ]
 
 # --- MongoDB Connection ---
-client = MongoClient(
-    "mongodb+srv://shakti4052_db_user:shakti1707@cluster0.dmyk79s.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-)
+client = MongoClient(os.getenv("MONGODB_URI"))
 db = client["flaskdb"]
 users_collection = db["users"]
 
 # --- Fireworks AI Config ---
-FIREWORKS_API_KEY = "fw_3ZjYrkod6BN4JPDLM7BLLh5b"
-FIREWORKS_MODEL = "accounts/fireworks/models/kimi-k2-instruct-0905"
+FIREWORKS_API_KEY = os.getenv("FIREWORKS_API_KEY")
+FIREWORKS_MODEL = os.getenv("FIREWORKS_MODEL")
 
 def call_fireworks_api(user_message):
     url = "https://api.fireworks.ai/inference/v1/chat/completions"
@@ -79,74 +79,52 @@ def call_fireworks_api(user_message):
         print("=== Fireworks Raw Response ===")
         print(data)
 
-        if 'choices' in data and len(data['choices']) > 0:
-            choice = data['choices'][0]
-            if 'message' in choice and 'content' in choice['message']:
-                return choice['message']['content']
-            elif 'text' in choice:
-                return choice['text']
+        if "choices" in data and len(data["choices"]) > 0:
+            choice = data["choices"][0]
+            if "message" in choice and "content" in choice["message"]:
+                return choice["message"]["content"]
+            elif "text" in choice:
+                return choice["text"]
         return "⚠️ No valid response from Fireworks."
     except Exception as e:
         return f"🔥 Fireworks API error: {str(e)}"
-
-# --- Google Calendar Config ---
-CLIENT_SECRETS_FILE = 'credentials.json'
 
 # --- Helper: Normalize relative dates to absolute ---
 def normalize_time(time_str):
     if not time_str:
         return None
-
     parsed = dateparser.parse(
         time_str,
         settings={
-            'TIMEZONE': 'Asia/Kolkata',
-            'RETURN_AS_TIMEZONE_AWARE': False,
-            'PREFER_DATES_FROM': 'future',   # ensures "tomorrow" means future
-            'RELATIVE_BASE': datetime.now(), # base reference is now
-        }
+            "TIMEZONE": "Asia/Kolkata",
+            "RETURN_AS_TIMEZONE_AWARE": False,
+            "PREFER_DATES_FROM": "future",
+            "RELATIVE_BASE": datetime.now(),
+        },
     )
     if not parsed:
         return None
     return parsed.strftime("%Y-%m-%d %H:%M")
 
-
-# --- Helper: Convert to RFC3339 for Google Calendar ---
 # --- Helper: Convert datetime object to RFC3339 for Google Calendar ---
 def to_rfc3339(dt_object):
-    """
-    Converts a timezone-aware datetime object to an RFC3339 string
-    that the Google Calendar API accepts.
-    """
     if not dt_object:
         raise ValueError("Cannot convert a null datetime object.")
-    
-    # The .isoformat() method on a timezone-aware object already
-    # produces the correct RFC3339 format (e.g., '2025-09-19T16:00:00+05:30').
-    # We DO NOT need to add 'Z'.
     return dt_object.isoformat()
 
 def parse_meeting_time(time_str, relative_base=None):
-    """
-    Parses a time string using dateparser with robust settings.
-    Returns a timezone-aware datetime object.
-    """
     if not time_str:
         return None
-    
     base = relative_base or datetime.now()
-
-    # Settings to handle ambiguity and prefer future dates
     settings = {
-        'TIMEZONE': 'Asia/Kolkata',
-        'RETURN_AS_TIMEZONE_AWARE': True,  # Important for Google API
-        'PREFER_DATES_FROM': 'future',
-        'RELATIVE_BASE': base,
+        "TIMEZONE": "Asia/Kolkata",
+        "RETURN_AS_TIMEZONE_AWARE": True,
+        "PREFER_DATES_FROM": "future",
+        "RELATIVE_BASE": base,
     }
-    
     return dateparser.parse(time_str, settings=settings)
 
-# --- Standard Routes ---
+# --- Routes ---
 @app.route("/")
 def home():
     if "username" in session:
@@ -180,8 +158,8 @@ def login():
         user = users_collection.find_one({"username": username, "password": password})
         if user:
             session["username"] = username
-            if 'google_credentials' not in session:
-                return redirect(url_for('authorize'))
+            if "google_credentials" not in session:
+                return redirect(url_for("authorize"))
             return redirect(url_for("chat"))
         else:
             message = "Invalid username or password!"
@@ -191,8 +169,8 @@ def login():
 def chat():
     if "username" not in session:
         return redirect(url_for("login"))
-    if 'google_credentials' not in session:
-        return redirect(url_for('authorize'))
+    if "google_credentials" not in session:
+        return redirect(url_for("authorize"))
     return render_template("chat.html", username=session["username"])
 
 @app.route("/logout")
@@ -202,76 +180,67 @@ def logout():
     return redirect(url_for("login"))
 
 # --- Google OAuth Routes ---
-@app.route('/authorize')
+@app.route("/authorize")
 def authorize():
     flow = Flow.from_client_config(
         GOOGLE_CLIENT_CONFIG,
         scopes=SCOPES,
-        redirect_uri=url_for('oauth2callback', _external=True)
+        redirect_uri=url_for("oauth2callback", _external=True),
     )
-    
-    # This part is critical
     authorization_url, state = flow.authorization_url(
-        access_type='offline',
-        prompt='consent' 
+        access_type="offline",
+        prompt="consent"
     )
-    
-    session['state'] = state
+    session["state"] = state
     return redirect(authorization_url)
 
-@app.route('/oauth2callback')
+@app.route("/oauth2callback")
 def oauth2callback():
-    state = session['state']
+    state = session["state"]
     flow = Flow.from_client_config(
         GOOGLE_CLIENT_CONFIG, scopes=SCOPES, state=state,
-        redirect_uri=url_for('oauth2callback', _external=True)
+        redirect_uri=url_for("oauth2callback", _external=True),
     )
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
-    session['google_credentials'] = {
-        'token': creds.token,
-        'refresh_token': creds.refresh_token,
-        'token_uri': creds.token_uri,
-        'client_id': creds.client_id,
-        'client_secret': creds.client_secret,
-        'scopes': creds.scopes
+    session["google_credentials"] = {
+        "token": creds.token,
+        "refresh_token": creds.refresh_token,
+        "token_uri": creds.token_uri,
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
+        "scopes": creds.scopes,
     }
-    return redirect(url_for('chat'))
+    return redirect(url_for("chat"))
 
-# --- Chat Processing Route ---
-@app.route('/process_chat_message', methods=['POST'])
+# --- Chat Processing ---
+@app.route("/process_chat_message", methods=["POST"])
 def process_chat_message():
-    user_message = request.json.get('message')
+    user_message = request.json.get("message")
 
     prompt = f"""
         Analyze the user's request: "{user_message}"
 
-        Your task is to act as a meeting scheduling assistant. You must extract the meeting title, start time, end time, and a list of attendee emails.
-        - The current date is {datetime.now().strftime('%Y-%m-%d %H:%M')}. Use this for relative dates like "today" or "tomorrow".
-        - Convert all times to an absolute format that dateparser can understand (e.g., "today 4pm", "tomorrow 10:30am").
-        - If no end time is specified, calculate it as 1 hour after the start time.
+        Extract title, start_time, end_time, and attendees.
+        Current date: {datetime.now().strftime('%Y-%m-%d %H:%M')}.
+        If no end time, default = 1 hour after start.
 
-        IMPORTANT: Your entire response MUST be a single, valid JSON object and nothing else. Do not add explanations or markdown formatting like ```json.
-
-        The JSON format MUST be:
+        Return ONLY JSON:
         {{
-            "message": "A brief, friendly confirmation message for the user.",
+            "message": "confirmation",
             "meeting_proposal": {{
                 "title": "string",
-                "start_time": "string (e.g., 'today 4:00 PM')",
-                "end_time": "string (e.g., 'today 5:00 PM')",
+                "start_time": "string",
+                "end_time": "string",
                 "attendees": ["email1@example.com"]
             }}
         }}
-
-        If you cannot extract enough details, return a JSON object where "meeting_proposal" is null.
-        """
+    """
 
     bot_reply = call_fireworks_api(prompt)
 
     try:
-        # Clean up potential markdown formatting from the AI response
-        json_str = bot_reply[bot_reply.find("{"): bot_reply.rfind("}")+1]
+        json_str = bot_reply[bot_reply.find("{"): bot_reply.rfind("}") + 1]
         data = json.loads(json_str)
     except Exception:
         return jsonify({"type": "chat", "reply": bot_reply})
@@ -280,108 +249,91 @@ def process_chat_message():
     if not meeting_proposal or not meeting_proposal.get("start_time"):
         return jsonify({"type": "chat", "reply": data.get("message", bot_reply)})
 
-    # --- Parse times using the new reliable function ---
     start_dt = parse_meeting_time(meeting_proposal.get("start_time"))
     end_dt = parse_meeting_time(meeting_proposal.get("end_time"))
 
-    # If parsing fails for the start time, we can't proceed
     if not start_dt:
-        return jsonify({"type": "chat", "reply": "I'm sorry, I couldn't understand the meeting time. Could you please be more specific?"})
+        return jsonify({"type": "chat", "reply": "❌ Couldn't understand meeting time."})
 
-    # If end time is missing or invalid, default it to 1 hour after start
     if not end_dt or end_dt <= start_dt:
-        from datetime import timedelta
         end_dt = start_dt + timedelta(hours=1)
 
-    # --- Normalize attendees ---
     attendees = meeting_proposal.get("attendees") or []
     if isinstance(attendees, str):
         attendees = [a.strip() for a in attendees.split(",") if a.strip()]
-    
-    # Format for display on the frontend
-    display_format = "%Y-%m-%d %H:%M"
 
     return jsonify({
         "type": "meeting_proposal",
         "message": data.get("message", "I can schedule this for you. Does this look right?"),
         "details": {
             "title": meeting_proposal.get("title", "Scheduled Meeting"),
-            "start_time_display": start_dt.strftime(display_format),
-            "end_time_display": end_dt.strftime(display_format),
+            "start_time_display": start_dt.strftime("%Y-%m-%d %H:%M"),
+            "end_time_display": end_dt.strftime("%Y-%m-%d %H:%M"),
             "attendees": attendees
         }
     })
 
-
-# --- Schedule Meeting Route ---
-# --- Schedule Meeting Route ---
-@app.route('/schedule_meeting', methods=['POST'])
+# --- Schedule Meeting ---
+@app.route("/schedule_meeting", methods=["POST"])
 def schedule_meeting():
-    if 'google_credentials' not in session:
-        return jsonify({'success': False, 'message': 'Authentication required.'}), 401
+    if "google_credentials" not in session:
+        return jsonify({"success": False, "message": "Authentication required."}), 401
 
-    creds = Credentials.from_authorized_user_info(session['google_credentials'], SCOPES)
+    creds = Credentials.from_authorized_user_info(session["google_credentials"], SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(GoogleRequest())
-        session['google_credentials']['token'] = creds.token
+        session["google_credentials"]["token"] = creds.token
 
     try:
         meeting_details = request.json
         if not meeting_details:
             return jsonify({"success": False, "message": "❌ No meeting details received."})
 
-        title = meeting_details.get('title', 'Scheduled Meeting')
-        start_time_str = meeting_details.get("start_time")
-        end_time_str = meeting_details.get("end_time")
-        attendees = meeting_details.get('attendees', [])
-
-        # Parse the string times from the request into datetime objects
-        start_dt = parse_meeting_time(start_time_str)
-        end_dt = parse_meeting_time(end_time_str)
+        title = meeting_details.get("title", "Scheduled Meeting")
+        start_dt = parse_meeting_time(meeting_details.get("start_time"))
+        end_dt = parse_meeting_time(meeting_details.get("end_time"))
 
         if not start_dt or not end_dt:
-            return jsonify({"success": False, "message": "❌ Invalid start or end time format."})
-        
-        # Convert datetime objects to the RFC3339 string format required by Google API
+            return jsonify({"success": False, "message": "❌ Invalid start or end time."})
+
         start_rfc = to_rfc3339(start_dt)
         end_rfc = to_rfc3339(end_dt)
 
         service = build("calendar", "v3", credentials=creds)
-
         event_body = {
-            'summary': title,
-            'start': {'dateTime': start_rfc, 'timeZone': 'Asia/Kolkata'},
-            'end': {'dateTime': end_rfc, 'timeZone': 'Asia/Kolkata'},
-            'attendees': [{'email': email} for email in attendees if email],
-            'conferenceData': {
-                'createRequest': {
-                    'requestId': f'meeting-{datetime.now().timestamp()}',
-                    'conferenceSolutionKey': {'type': 'hangoutsMeet'}
+            "summary": title,
+            "start": {"dateTime": start_rfc, "timeZone": "Asia/Kolkata"},
+            "end": {"dateTime": end_rfc, "timeZone": "Asia/Kolkata"},
+            "attendees": [{"email": email} for email in meeting_details.get("attendees", []) if email],
+            "conferenceData": {
+                "createRequest": {
+                    "requestId": f"meeting-{datetime.now().timestamp()}",
+                    "conferenceSolutionKey": {"type": "hangoutsMeet"}
                 }
             }
         }
-        
+
         created_event = service.events().insert(
-            calendarId='primary',
+            calendarId="primary",
             body=event_body,
             conferenceDataVersion=1,
-            sendUpdates='all'
+            sendUpdates="all"
         ).execute()
 
         return jsonify({
             "success": True,
             "message": "✅ Meeting scheduled!",
-            "meet_link": created_event.get('hangoutLink'),
-            "event_link": created_event.get('htmlLink'),
+            "meet_link": created_event.get("hangoutLink"),
+            "event_link": created_event.get("htmlLink"),
         })
 
     except Exception as e:
         import traceback
         print("🔥 ERROR TRACEBACK:", traceback.format_exc())
         return jsonify({"success": False, "message": str(e)})
-    
-# --- Run Flask App ---
+
+# --- Run App ---
 if __name__ == "__main__":
-    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-    os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
     app.run(debug=True, port=5000)
