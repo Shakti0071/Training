@@ -20,7 +20,7 @@ payload = {
 headers = {
   "Accept": "application/json",
   "Content-Type": "application/json",
-  "Authorization": "Bearer fw_3ZjYrkod6BN4JPDLM7BLLh5b"
+  "Authorization": f"Bearer {os.getenv('FIREWORKS_API_KEY')}" 
 }
 response = requests.request("POST", url, headers=headers, data=json.dumps(payload))
 print(response.text)
