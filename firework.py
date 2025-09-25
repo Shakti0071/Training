@@ -1,5 +1,6 @@
 import requests
 import json
+import os
 
 url = "https://api.fireworks.ai/inference/v1/chat/completions"
 payload = {
